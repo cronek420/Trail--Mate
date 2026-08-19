@@ -37,15 +37,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Probe NPS public trails
         run: node scripts/nps-appa-probe.mjs
-
       - name: Upload NPS probe artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -62,15 +59,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Probe official ANST treadway
         run: node scripts/anst-treadway-probe.mjs
-
       - name: Upload ANST treadway artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -87,15 +81,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Probe current ANST centerline
         run: node scripts/anst-centerline-probe.mjs
-
       - name: Upload ANST centerline artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -104,3 +95,23 @@ jobs:
           path: artifacts/anst-centerline
           if-no-files-found: ignore
           retention-days: 7
+
+  georgia-route-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build verified Georgia route artifact
+        run: node scripts/build-georgia-route.mjs
+      - name: Upload Georgia route proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: georgia-route-proof
+          path: artifacts/georgia-route
+          if-no-files-found: error
+          retention-days: 14
