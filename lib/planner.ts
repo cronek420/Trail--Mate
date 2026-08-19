@@ -30,20 +30,23 @@ const round = (value: number, digits = 1) => {
   return Math.round(value * factor) / factor;
 };
 
+const isFiniteNumber = (value: number) => Number.isFinite(value);
+
 export function buildPlan(input: PlannerInput): PlannerResult {
   const start = getTrailPoint(input.startId);
   const end = getTrailPoint(input.endId);
 
   if (!start || !end) throw new Error("Choose valid start and end points.");
   if (end.mile <= start.mile) throw new Error("End point must be after the start point for V1.");
-  if (!Number.isFinite(input.days) || input.days < 1 || input.days > 30) {
-    throw new Error("Days must be between 1 and 30.");
+
+  if (!isFiniteNumber(input.days) || !Number.isInteger(input.days) || input.days < 1 || input.days > 30) {
+    throw new Error("Days must be a whole number between 1 and 30.");
   }
-  if (input.bodyWeightLb < 70 || input.bodyWeightLb > 400) {
-    throw new Error("Body weight must be between 70 and 400 lb.");
+  if (!isFiniteNumber(input.bodyWeightLb) || input.bodyWeightLb < 70 || input.bodyWeightLb > 400) {
+    throw new Error("Body weight must be a number between 70 and 400 lb.");
   }
-  if (input.packWeightLb < 0 || input.packWeightLb > 100) {
-    throw new Error("Pack weight must be between 0 and 100 lb.");
+  if (!isFiniteNumber(input.packWeightLb) || input.packWeightLb < 0 || input.packWeightLb > 100) {
+    throw new Error("Pack weight must be a number between 0 and 100 lb.");
   }
 
   const distanceMiles = end.mile - start.mile;
