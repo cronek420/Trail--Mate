@@ -29,3 +29,28 @@ jobs:
 
       - name: Build Next.js app
         run: npm run build
+
+  nps-data-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Probe official NPS APPA GeoJSON
+        run: node scripts/nps-appa-probe.mjs
+
+      - name: Upload NPS probe artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nps-appa-probe
+          path: artifacts/nps
+          if-no-files-found: ignore
+          retention-days: 7
