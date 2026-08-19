@@ -8,6 +8,9 @@ const GATC_TREADWAY_OBJECT_ID = 5;
 const GEORGIA_CLUB_CODE = 30;
 const M_PER_MILE = 1609.344;
 const FT_PER_M = 3.280839895;
+const ON_ROUTE_FEET = 500;
+const NEAR_TRAIL_FEET = 5280;
+const GROSS_OUTLIER_FEET = 15840;
 
 async function queryGeoJSON(layerId, where) {
   const endpoint = `${SERVICE}/${layerId}/query`;
@@ -54,7 +57,6 @@ function snapPointToRoute(pointLonLat, routeLonLat) {
 
   let best = null;
   let cumulative = 0;
-
   for (let i = 0; i < route.length - 1; i += 1) {
     const a = route[i];
     const b = route[i + 1];
@@ -67,13 +69,9 @@ function snapPointToRoute(pointLonLat, routeLonLat) {
     const q = [a[0] + t * dx, a[1] + t * dy];
     const dist = Math.hypot(p[0] - q[0], p[1] - q[1]);
     const along = cumulative + t * segLen;
-
-    if (!best || dist < best.distanceM) {
-      best = { distanceM: dist, alongM: along, snapped: projector.ll(q), segmentIndex: i };
-    }
+    if (!best || dist < best.distanceM) best = { distanceM: dist, alongM: along, snapped: projector.ll(q), segmentIndex: i };
     cumulative += segLen;
   }
-
   return { ...best, routeLengthM: cumulative };
 }
 
@@ -89,15 +87,18 @@ function pointCoordinates(feature) {
   return c;
 }
 
+function relationshipForFeet(feet) {
+  if (feet <= ON_ROUTE_FEET) return "on-route";
+  if (feet <= NEAR_TRAIL_FEET) return "near-trail";
+  return "connector-needed";
+}
+
 const treadwayResult = await queryGeoJSON(TREADWAY_LAYER, `OBJECTID=${GATC_TREADWAY_OBJECT_ID}`);
 if (treadwayResult.data.features.length !== 1) throw new Error("Expected one Georgia treadway feature.");
 const treadwayFeature = treadwayResult.data.features[0];
 const route = flattenLineCoordinates(treadwayFeature.geometry);
 if (route.length < 1000) throw new Error("Georgia treadway geometry is unexpectedly sparse.");
-
-const southLat = route[0][1];
-const northLat = route.at(-1)[1];
-if (southLat > northLat) route.reverse();
+if (route[0][1] > route.at(-1)[1]) route.reverse();
 const routeSouth = route[0][1];
 const routeNorth = route.at(-1)[1];
 
@@ -113,6 +114,7 @@ function normalizeFacility(feature, type) {
   const sourceCoordinates = pointCoordinates(feature);
   const snap = snapPointToRoute(sourceCoordinates, route);
   const p = feature.properties ?? {};
+  const snapDistanceFeet = Number((snap.distanceM * FT_PER_M).toFixed(1));
   return {
     id: `${type}-${p.GIS_ID ?? p.OBJECTID}`,
     type,
@@ -122,9 +124,12 @@ function normalizeFacility(feature, type) {
     sourceGisId: p.GIS_ID ?? null,
     sourceGlobalId: p.GlobalID ?? null,
     sourceCoordinates,
-    snappedCoordinates: snap.snapped,
+    nearestTreadwayCoordinates: snap.snapped,
     geometryMileFromSpringer: Number((snap.alongM / M_PER_MILE).toFixed(3)),
-    snapDistanceFeet: Number((snap.distanceM * FT_PER_M).toFixed(1)),
+    snapDistanceFeet,
+    routeRelationship: relationshipForFeet(snapDistanceFeet),
+    usableAsDirectRouteAnchor: snapDistanceFeet <= ON_ROUTE_FEET,
+    connectorRequired: snapDistanceFeet > ON_ROUTE_FEET,
     source: p.Source ?? null,
     sourceVersion: p.Version ?? null,
     sourceEditDate: p.Edit_Date ?? null,
@@ -135,17 +140,15 @@ function normalizeFacility(feature, type) {
 const shelters = sheltersResult.data.features.filter(onGeorgiaAT).map((f) => normalizeFacility(f, "shelter"));
 const parking = parkingResult.data.features.filter(onGeorgiaAT).map((f) => normalizeFacility(f, "parking"));
 const facilities = [...shelters, ...parking].sort((a, b) => a.geometryMileFromSpringer - b.geometryMileFromSpringer);
+const connectorNeeded = facilities.filter((f) => f.routeRelationship === "connector-needed");
+const grossOutliers = facilities.filter((f) => f.snapDistanceFeet > GROSS_OUTLIER_FEET);
 
-const farSnaps = facilities.filter((f) => f.snapDistanceFeet > 1000);
 const summary = {
-  releaseId: "ga-2026-anst-gatc-5-facilities-v1",
+  releaseId: "ga-2026-anst-gatc-5-facilities-v2",
   status: "verification-artifact-not-navigation-certified",
   generatedAt: new Date().toISOString(),
   geometrySource: treadwayResult.endpoint,
-  facilitySources: {
-    shelters: sheltersResult.endpoint,
-    parking: parkingResult.endpoint,
-  },
+  facilitySources: { shelters: sheltersResult.endpoint, parking: parkingResult.endpoint },
   route: {
     sourceFeatureObjectId: treadwayFeature.properties?.OBJECTID,
     sourceFeatureName: treadwayFeature.properties?.Name,
@@ -156,21 +159,26 @@ const summary = {
     shelters: shelters.length,
     parking: parking.length,
     total: facilities.length,
+    onRoute: facilities.filter((f) => f.routeRelationship === "on-route").length,
+    nearTrail: facilities.filter((f) => f.routeRelationship === "near-trail").length,
+    connectorNeeded: connectorNeeded.length,
   },
   snapping: {
     method: "nearest point on official GATC treadway using a local metric projection",
+    thresholdsFeet: { onRouteMax: ON_ROUTE_FEET, nearTrailMax: NEAR_TRAIL_FEET, grossOutlier: GROSS_OUTLIER_FEET },
     mileField: "geometryMileFromSpringer",
     mileWarning: "This is a geometric diagnostic mile, not ATC official trail mileage. Official linear-reference calibration remains incomplete.",
-    farSnapThresholdFeet: 1000,
-    farSnapCount: farSnaps.length,
+    relationshipRule: "Facilities are never silently moved onto the A.T.; routeRelationship preserves whether a connector/side trail is required.",
   },
   gates: {
     expectedShelterCount12: shelters.length === 12,
     facilitiesSortedSouthToNorth: facilities.every((f, i) => i === 0 || facilities[i - 1].geometryMileFromSpringer <= f.geometryMileFromSpringer),
-    noExtremeSnapDistances: farSnaps.length === 0,
+    noGrossCoordinateOutliers: grossOutliers.length === 0,
+    offRouteFacilitiesExplicitlyClassified: facilities.every((f) => f.routeRelationship && typeof f.connectorRequired === "boolean"),
     officialMileCalibrationComplete: false,
     fieldNavigationCertified: false,
   },
+  connectorNeeded: connectorNeeded.map((f) => ({ name: f.name, type: f.type, snapDistanceFeet: f.snapDistanceFeet, geometryMileFromSpringer: f.geometryMileFromSpringer })),
   facilities,
 };
 
@@ -181,9 +189,11 @@ console.log(JSON.stringify({
   counts: summary.counts,
   gates: summary.gates,
   maxSnapDistanceFeet: Math.max(...facilities.map((f) => f.snapDistanceFeet)),
-  calibrationCandidates: facilities.filter((f) => /Springer|Three Forks|Woody Gap|Neels Gap|Unicoi Gap|Dicks Creek Gap/i.test(f.name)).map((f) => ({ name: f.name, geometryMileFromSpringer: f.geometryMileFromSpringer, snapDistanceFeet: f.snapDistanceFeet })),
+  connectorNeeded: summary.connectorNeeded,
+  calibrationCandidates: facilities.filter((f) => /Springer|Three Forks|Woody Gap|Neels Gap|Unicoi Gap|Dicks Creek Gap/i.test(f.name)).map((f) => ({ name: f.name, geometryMileFromSpringer: f.geometryMileFromSpringer, snapDistanceFeet: f.snapDistanceFeet, routeRelationship: f.routeRelationship })),
 }, null, 2));
 
 if (!summary.gates.expectedShelterCount12) throw new Error(`Expected 12 Georgia A.T. shelters, got ${shelters.length}.`);
 if (!summary.gates.facilitiesSortedSouthToNorth) throw new Error("Snapped facilities are not in deterministic south-to-north order.");
-if (!summary.gates.noExtremeSnapDistances) throw new Error(`Facilities exceed ${summary.snapping.farSnapThresholdFeet} ft snap threshold: ${farSnaps.map((f) => f.name).join(", ")}`);
+if (!summary.gates.noGrossCoordinateOutliers) throw new Error(`Gross coordinate outliers detected: ${grossOutliers.map((f) => f.name).join(", ")}`);
+if (!summary.gates.offRouteFacilitiesExplicitlyClassified) throw new Error("Facility route relationships are incomplete.");
