@@ -1,16 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 
 const serviceBase = "https://services1.arcgis.com/fBc8EJBxQRMcHlei/arcgis/rest/services/ANST_Facilities/FeatureServer";
-const layers = {
-  parking: 2,
-  shelters: 4,
-};
+const layers = { parking: 2, shelters: 4 };
 
-async function queryLayer(name, layerId) {
+async function query(layerId, where, outFields = "*") {
   const endpoint = `${serviceBase}/${layerId}/query`;
   const params = new URLSearchParams({
-    where: "Trail_Club=30",
-    outFields: "*",
+    where,
+    outFields,
     returnGeometry: "true",
     outSR: "4326",
     f: "geojson",
@@ -18,22 +15,41 @@ async function queryLayer(name, layerId) {
   const response = await fetch(`${endpoint}?${params.toString()}`, {
     headers: { "user-agent": "Trail-Mate Georgia facilities validation probe" },
   });
-  if (!response.ok) throw new Error(`${name} query failed: ${response.status} ${response.statusText}`);
+  if (!response.ok) throw new Error(`Layer ${layerId} query failed: ${response.status} ${response.statusText}`);
   const geojson = await response.json();
   if (geojson?.type !== "FeatureCollection" || !Array.isArray(geojson.features)) {
-    throw new Error(`${name} query did not return GeoJSON.`);
+    throw new Error(`Layer ${layerId} query did not return GeoJSON.`);
   }
   return { endpoint, geojson };
 }
 
-const results = {};
-for (const [name, layerId] of Object.entries(layers)) {
-  results[name] = await queryLayer(name, layerId);
+const [sheltersResult, parkingResult, treadwayResult] = await Promise.all([
+  query(layers.shelters, "Trail_Club=30"),
+  query(layers.parking, "Trail_Club=30"),
+  query(7, "Name='GATC AT Treadway'", "OBJECTID,Name,Status,Trail_Club,Source,Version,Edit_Date,GlobalID"),
+]);
+
+if (treadwayResult.geojson.features.length !== 1 || treadwayResult.geojson.features[0]?.geometry?.type !== "LineString") {
+  throw new Error("Could not establish the single official GATC treadway envelope.");
 }
+
+const routeCoordinates = treadwayResult.geojson.features[0].geometry.coordinates;
+const routeSouth = Math.min(...routeCoordinates.map(([, lat]) => lat));
+const routeNorth = Math.max(...routeCoordinates.map(([, lat]) => lat));
 
 function featureName(feature) {
   const p = feature?.properties ?? {};
   return p.Name ?? p.NAME ?? p.LOC_NAME ?? p.Location ?? p.LABEL ?? p.MAPLABEL ?? `OBJECTID ${p.OBJECTID ?? "unknown"}`;
+}
+
+function pointLat(feature) {
+  const coordinates = feature?.geometry?.coordinates;
+  return Array.isArray(coordinates) && typeof coordinates[1] === "number" ? coordinates[1] : null;
+}
+
+function isWithinATStateEnvelope(feature) {
+  const lat = pointLat(feature);
+  return lat !== null && lat >= routeSouth && lat <= routeNorth;
 }
 
 function bounds(features) {
@@ -49,33 +65,51 @@ function bounds(features) {
   };
 }
 
+function summarizeFacilities(features) {
+  const atSection = features.filter(isWithinATStateEnvelope);
+  const outsideATSection = features.filter((feature) => !isWithinATStateEnvelope(feature));
+  return {
+    managedByGATCCount: features.length,
+    atSectionCount: atSection.length,
+    atSectionBounds: bounds(atSection),
+    atSectionNames: atSection.map(featureName).sort(),
+    outsideATSectionCount: outsideATSection.length,
+    outsideATSectionNames: outsideATSection.map(featureName).sort(),
+  };
+}
+
+const shelters = summarizeFacilities(sheltersResult.geojson.features);
+const parking = summarizeFacilities(parkingResult.geojson.features);
+
 const summary = {
   fetchedAt: new Date().toISOString(),
-  filter: "Trail_Club=30 (Georgia Appalachian Trail Club coded value)",
   service: serviceBase,
-  shelters: {
-    endpoint: results.shelters.endpoint,
-    count: results.shelters.geojson.features.length,
-    bounds: bounds(results.shelters.geojson.features),
-    names: results.shelters.geojson.features.map(featureName).sort(),
+  managementFilter: "Trail_Club=30 (Georgia Appalachian Trail Club coded value)",
+  classificationRule: "A.T.-section facility must fall between the official GATC treadway southern and northern latitude endpoints. This separates Approach Trail facilities south of Springer from the A.T. state section without hard-coding facility names.",
+  routeEnvelope: {
+    source: treadwayResult.endpoint,
+    south: routeSouth,
+    north: routeNorth,
   },
-  parking: {
-    endpoint: results.parking.endpoint,
-    count: results.parking.geojson.features.length,
-    bounds: bounds(results.parking.geojson.features),
-    names: results.parking.geojson.features.map(featureName).sort(),
-  },
+  shelters: { endpoint: sheltersResult.endpoint, ...shelters },
+  parking: { endpoint: parkingResult.endpoint, ...parking },
 };
 
+const sheltersAT = sheltersResult.geojson.features.filter(isWithinATStateEnvelope);
+const parkingAT = parkingResult.geojson.features.filter(isWithinATStateEnvelope);
+
 await mkdir("artifacts/georgia-facilities", { recursive: true });
-await writeFile("artifacts/georgia-facilities/shelters.geojson", JSON.stringify(results.shelters.geojson));
-await writeFile("artifacts/georgia-facilities/parking.geojson", JSON.stringify(results.parking.geojson));
+await writeFile("artifacts/georgia-facilities/shelters-at-section.geojson", JSON.stringify({ type: "FeatureCollection", features: sheltersAT }));
+await writeFile("artifacts/georgia-facilities/parking-at-section.geojson", JSON.stringify({ type: "FeatureCollection", features: parkingAT }));
 await writeFile("artifacts/georgia-facilities/summary.json", JSON.stringify(summary, null, 2));
 console.log(JSON.stringify(summary, null, 2));
 
-if (summary.shelters.count !== 12) {
-  throw new Error(`Georgia shelter cross-check failed: expected current ATC reference count 12, official facilities query returned ${summary.shelters.count}.`);
+if (summary.shelters.atSectionCount !== 12) {
+  throw new Error(`Georgia A.T. shelter cross-check failed: expected ATC state reference 12, classified official facilities returned ${summary.shelters.atSectionCount}.`);
 }
-if (!summary.shelters.bounds || summary.shelters.bounds.south < 34.5 || summary.shelters.bounds.north > 35.1) {
-  throw new Error(`Georgia shelter bounds look wrong: ${JSON.stringify(summary.shelters.bounds)}`);
+if (summary.shelters.outsideATSectionCount !== 2) {
+  throw new Error(`Expected two GATC-managed shelters south of the A.T. terminus, found ${summary.shelters.outsideATSectionCount}.`);
+}
+if (!summary.shelters.atSectionBounds || summary.shelters.atSectionBounds.south < routeSouth || summary.shelters.atSectionBounds.north > routeNorth) {
+  throw new Error(`Georgia A.T. shelter bounds failed route-envelope validation: ${JSON.stringify(summary.shelters.atSectionBounds)}`);
 }
