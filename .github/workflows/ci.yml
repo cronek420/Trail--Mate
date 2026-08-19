@@ -79,3 +79,28 @@ jobs:
           path: artifacts/anst
           if-no-files-found: ignore
           retention-days: 7
+
+  anst-centerline-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Probe current ANST centerline
+        run: node scripts/anst-centerline-probe.mjs
+
+      - name: Upload ANST centerline artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anst-centerline-probe
+          path: artifacts/anst-centerline
+          if-no-files-found: ignore
+          retention-days: 7
