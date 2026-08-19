@@ -15,18 +15,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Install dependencies
         run: npm install
-
       - name: Test planner logic
         run: npm test
-
       - name: Build Next.js app
         run: npm run build
 
@@ -114,4 +110,25 @@ jobs:
           name: georgia-route-proof
           path: artifacts/georgia-route
           if-no-files-found: error
+          retention-days: 14
+
+  georgia-facilities-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate official Georgia shelters and parking
+        run: node scripts/georgia-facilities-probe.mjs
+      - name: Upload Georgia facilities proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: georgia-facilities-proof
+          path: artifacts/georgia-facilities
+          if-no-files-found: ignore
           retention-days: 14
