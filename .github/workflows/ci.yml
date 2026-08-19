@@ -132,3 +132,24 @@ jobs:
           path: artifacts/georgia-facilities
           if-no-files-found: ignore
           retention-days: 14
+
+  georgia-snapped-facilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Snap Georgia facilities to official treadway
+        run: node scripts/build-georgia-snapped-facilities.mjs
+      - name: Upload snapped Georgia facilities
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: georgia-snapped-facilities
+          path: artifacts/georgia-snapped-facilities
+          if-no-files-found: error
+          retention-days: 14
