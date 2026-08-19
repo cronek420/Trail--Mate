@@ -1,0 +1,155 @@
+name: Trail-Mate V1 CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Test planner logic
+        run: npm test
+      - name: Build Next.js app
+        run: npm run build
+
+  nps-data-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Probe NPS public trails
+        run: node scripts/nps-appa-probe.mjs
+      - name: Upload NPS probe artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nps-appa-probe
+          path: artifacts/nps
+          if-no-files-found: ignore
+          retention-days: 7
+
+  anst-treadway-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Probe official ANST treadway
+        run: node scripts/anst-treadway-probe.mjs
+      - name: Upload ANST treadway artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anst-treadway-probe
+          path: artifacts/anst
+          if-no-files-found: ignore
+          retention-days: 7
+
+  anst-centerline-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Probe current ANST centerline
+        run: node scripts/anst-centerline-probe.mjs
+      - name: Upload ANST centerline artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anst-centerline-probe
+          path: artifacts/anst-centerline
+          if-no-files-found: ignore
+          retention-days: 7
+
+  georgia-route-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build verified Georgia route artifact
+        run: node scripts/build-georgia-route.mjs
+      - name: Upload Georgia route proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: georgia-route-proof
+          path: artifacts/georgia-route
+          if-no-files-found: error
+          retention-days: 14
+
+  georgia-facilities-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate official Georgia shelters and parking
+        run: node scripts/georgia-facilities-probe.mjs
+      - name: Upload Georgia facilities proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: georgia-facilities-proof
+          path: artifacts/georgia-facilities
+          if-no-files-found: ignore
+          retention-days: 14
+
+  georgia-snapped-facilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Snap Georgia facilities to official treadway
+        run: node scripts/build-georgia-snapped-facilities.mjs
+      - name: Upload snapped Georgia facilities
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: georgia-snapped-facilities
+          path: artifacts/georgia-snapped-facilities
+          if-no-files-found: error
+          retention-days: 14

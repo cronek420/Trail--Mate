@@ -2,6 +2,12 @@
 
 Trail-Mate is an Appalachian Trail planning and logistics project focused on helping hikers turn a desired route into a practical, understandable, safety-aware trip plan.
 
+## Read this first
+
+**`docs/PROJECT_PLAN.md` is the master source of truth for Trail-Mate's vision, phase order, scope boundaries, safety rules, feature admission test, and immediate next actions.**
+
+Before adding a major feature, review that plan and update it deliberately if the product direction changes.
+
 ## Initial architecture
 
 The project starts deliberately small:
@@ -30,3 +36,5 @@ The project starts deliberately small:
 10. Run the build-audit matrix against the complete flow
 
 The first product goal is simple: **Pick AT Start → Pick AT End → Choose Days → Generate Daily Plan.**
+
+Current focus: **make this core flow trustworthy before expanding the feature set.**
