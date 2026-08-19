@@ -6,140 +6,169 @@ This document controls how Trail-Mate chooses, validates, stores, attributes, an
 
 ## Current status
 
-**V1 code gate: PASSED.** GitHub Actions now completes dependency installation, planner behavior tests, and the production Next.js build successfully.
+**V1 code gate: PASSED.** GitHub Actions completes dependency installation, planner behavior tests, and the production Next.js build successfully.
 
-**Current milestone:** prove one verified Appalachian Trail data slice in Georgia before replacing any demo values.
+**Current milestone:** prove and package one verified Appalachian Trail data slice in Georgia before replacing demo values.
+
+## Source decision
+
+### Primary route geometry: official ANST A.T. Treadway
+
+Primary route-shape source for Trail-Mate planning: the Appalachian National Scenic Trail `ANST_Facilities` FeatureServer, layer 7 (`A.T. Treadway`), published by the National Park Service Appalachian National Scenic Trail and Appalachian Trail Conservancy.
+
+Why this layer is preferred for planner route shape:
+- it is A.T.-specific rather than a nationwide generic trail inventory;
+- it spans the footpath from Georgia to Maine;
+- it provides one published treadway feature per trail-club section, including `GATC AT Treadway` for Georgia;
+- the Georgia treadway is a single contiguous LineString from Springer Mountain to the Georgia/North Carolina boundary;
+- it is specifically intended to depict A.T. features/facilities for maps and planning.
+
+Trail-Mate must retain source URL, publisher attribution, source/version fields, fetched timestamp, and validation metadata with every imported release.
+
+### Detailed geometry/reference: ANST_Centerline
+
+Use the ANST-specific `ANST_Centerline` FeatureServer as a detailed validation/reference source and for future fine-grained route processing.
+
+The service currently requires pagination: a single query stops at 2,000 features while the full official route contains 3,025 features. The repository probe therefore pages deterministically by OBJECTID and validates full Georgia-to-Maine extent.
+
+For Georgia (`Acronym = GATC`) the current probe found 108 official centerline segments. Its length fields demonstrate why geometry length and official hiking mileage must remain separate concepts:
+- GIS `Length_Ft` aggregate: 76.212 mi
+- GNSS length aggregate: 80.717 mi
+- GNSS 3D length aggregate: 83.392 mi
+- current ATC published Georgia A.T. mileage: 78.3 mi
+
+None of these GIS length fields will be silently substituted for official trail mileage.
+
+### Official trail-mile measure: ATC annual mileage/reference data
+
+ATC's annually published trail mileage is the product's authoritative hiker-facing trail-mile reference where an official value is available.
+
+Known 2026 validation references:
+- full A.T.: 2,197.9 miles;
+- Georgia: 78.3 A.T. miles;
+- Springer Mountain: southern terminus.
+
+Trail-Mate will model route geometry and official trail measure separately. Geometry answers **where the trail goes**. Official trail measure answers **what mile a hiker is at**. Derived geometric distance may be shown for diagnostics but must not overwrite the official measure.
+
+### Rejected as full-route source: generic NPS Public Trails
+
+The nationwide NPS Public Trails dataset remains useful as a public GIS reference, but it is **not accepted as Trail-Mate's full A.T. centerline source**.
+
+Repository probes established:
+- filtering `UNITCODE='APPA'` returned only 20 short features concentrated around the Harpers Ferry area;
+- querying the generic dataset by exact trail name returned 80 features but only extended south to roughly 35.45° N, excluding Georgia;
+- therefore the dataset fails the full A.T./Georgia coverage gate for this use case.
+
+Keep the probe as a regression/reference tool, but do not build Trail-Mate route mileage from it.
 
 ## Source hierarchy
 
-### 1. Trail geometry: National Park Service public GIS
+1. **Route shape:** ANST Facilities → A.T. Treadway.
+2. **Detailed centerline validation:** ANST_Centerline.
+3. **Official trail mileage:** current ATC published mileage/reference information.
+4. **Facilities:** ANST Facilities layers for shelters, campsites, parking, privies, vistas and side trails after each layer passes its own validation gate.
+5. **Dynamic safety data:** official ATC/NPS/agency sources with explicit freshness rules.
 
-Primary candidate: the NPS `NPS_Public_Trails` FeatureServer.
-
-Official NPS metadata states that this public dataset:
-- represents publicly accessible visitor-use trails across NPS units;
-- is derived from the authoritative internal NPS Trails dataset;
-- is contributed/reviewed by park units and regional GIS programs;
-- is intended for public uses including digital maps, trip-planning applications, recreation tools, research, and cartographic products;
-- supports GeoJSON queries;
-- exposes useful source metadata including trail name, unit code, edit/source dates, originator, map source, accuracy information, public/open status, and stable feature identifiers.
-
-The Appalachian Trail proof should attempt to isolate `UNITCODE = APPA` records and then verify names, continuity, geometry, and source metadata before use.
-
-Use NPS geometry only after we confirm:
-- Appalachian Trail records can be isolated reliably;
-- geometry is sufficiently current and complete for the product use case;
-- metadata/attribution requirements are captured in the repo and product;
-- a repeatable import/update process is documented;
-- mile calculations derived from geometry are tested against trusted reference points.
-
-Do not copy prototype mile markers into production merely because they look plausible.
-
-### 2. Appalachian Trail Conservancy + NPS APPA map: validation/reference
-
-Use official ATC and NPS Appalachian Trail information as the cross-check layer for total mileage, named places, trailheads, shelters, campsites, and planning references.
-
-Known 2026 reference facts useful for validation:
-- ATC lists the official 2026 A.T. length as **2,197.9 miles** and notes that official mileage can change because of relocations, measurement improvements, detours, and trail changes.
-- ATC's Georgia page lists **78.3 A.T. miles in Georgia** and **12 shelters**.
-- Springer Mountain is the southern terminus; ATC's Springer hike page describes the summit as approximately 1.0 mile southbound from the nearby FS 42 parking crossing.
-- NPS describes its APPA interactive webapp as a general-reference tool showing the treadway plus features such as side trails, parking, shelters, campsites, privies, vistas, and trail-club sections.
-
-These values are cross-checks, not substitutes for a measured imported centerline.
-
-Before consuming any underlying ArcGIS service directly beyond the public NPS Trails service, verify access terms, attribution, permitted use, update behavior, and field definitions.
-
-### 3. Dynamic/safety-sensitive data
+## Dynamic/safety-sensitive data
 
 Closures, conditions, water status, weather, operating hours, emergency resources, and similar time-sensitive data require separate source contracts and freshness rules. They must not be inferred from static geometry.
 
 Every dynamic record should eventually carry:
 - source;
-- source URL or source identifier;
+- source URL or stable source identifier;
 - fetched/verified timestamp;
 - expected refresh interval;
 - confidence/status;
 - stale-data behavior.
 
-## V1 data model direction
+## V1 data model
 
-Keep imported source records separate from derived planner values.
+Keep imported facts separate from derived planner values.
 
-Suggested layers:
+### `source_trail_geometry`
+- source id
+- publisher
+- source URL/layer id
+- source feature id
+- geometry
+- source version/edit date when available
+- imported timestamp
+- attribution
 
-1. `source_trail_geometry`
-   - source id
-   - source name
-   - geometry
-   - source updated date when available
-   - imported timestamp
-   - attribution
+### `trail_measure`
+- route release/version
+- official reference year
+- start anchor
+- end anchor
+- official mile values/reference source
+- mapping method from geometry position to official trail measure
 
-2. `trail_points`
-   - stable internal id
-   - source id
-   - name
-   - type
-   - latitude/longitude
-   - source trail measure or derived mile
-   - source metadata
+### `trail_points`
+- stable internal id
+- source id
+- name
+- type
+- latitude/longitude
+- official/derived trail measure with type clearly identified
+- source metadata
 
-3. `planner_derived`
-   - calculated route distance
-   - calculated daily segments
-   - calorie/food estimates
-   - calculation version
+### `planner_derived`
+- selected route distance/measure
+- calculated daily segments
+- calorie/food estimates
+- calculation version
 
-The planner should never overwrite raw source data with calculated values.
+The planner never overwrites raw source records with calculated values.
 
 ## Georgia proof-of-data sequence
 
-Do this in order and stop on a failed gate:
-
-1. Query NPS Public Trails for APPA records and retain source metadata.
-2. Confirm the returned geometry contains the Georgia Appalachian Trail section.
-3. Transform geometry into a consistent coordinate system suitable for distance calculations.
-4. Determine northbound line ordering without relying on array order from the source.
-5. Locate Springer Mountain as the starting anchor.
-6. Locate the Georgia/North Carolina boundary as the end validation anchor.
-7. Compute Georgia centerline length from the imported geometry.
-8. Compare the result with ATC's 78.3-mile Georgia reference; document expected measurement tolerance and investigate material discrepancies.
-9. Test recognizable intermediate locations such as Three Forks, Woody Gap, and Blood Mountain where reliable references are available.
-10. Save the proof as a versioned fixture/import artifact with source timestamps and attribution.
-11. Only after those checks pass, replace the current demo geometry/mileage layer.
-12. Keep the UI's prototype warning until the first real-data release passes the full build-audit gate.
+1. **PASSED:** identify A.T.-specific authoritative geometry source.
+2. **PASSED:** confirm official treadway spans Georgia to Maine.
+3. **PASSED:** isolate `GATC AT Treadway` from Springer Mountain to the GA/NC boundary.
+4. **PASSED:** independently validate detailed Georgia coverage using 108 `GATC` ANST_Centerline features.
+5. **PASSED:** document that GIS length metrics differ materially from official hiking mileage and must remain separate.
+6. Build a reproducible Georgia import artifact from the official treadway feature.
+7. Store source metadata, attribution, source version/edit date and fetch timestamp beside the artifact.
+8. Anchor Springer Mountain and the GA/NC boundary deterministically.
+9. Add the 2026 Georgia 78.3-mile official reference as a separate trail-measure record, not a geometry rewrite.
+10. Validate recognizable intermediate facilities/locations against authoritative layers.
+11. Add an import/version identifier so future geometry changes cannot silently alter saved trips.
+12. Only then wire the verified Georgia data behind the planner.
+13. Keep the UI's non-navigation warning until the full V1 field-use audit passes.
 
 ## Validation before replacing demo data
 
-A production import is not accepted until:
-
-- [x] authoritative leading source identified and documented
+- [x] authoritative A.T.-specific geometry source identified
 - [x] V1 planner tests and production build passing in CI
-- [ ] source terms/attribution reviewed and recorded for shipped use
-- [ ] Appalachian Trail geometry isolated correctly
-- [ ] Georgia subsection isolated correctly
-- [ ] northbound ordering is deterministic
-- [ ] start/end selections map to real trail positions
-- [ ] route distance is calculated from the selected trail path, not road distance
-- [ ] Georgia length compared against the official 78.3-mile reference
-- [ ] known reference segments compared against official/recognized references
-- [ ] import handles geometry changes without silently corrupting saved plans
-- [ ] data freshness is visible in metadata
-- [ ] demo-data warning remains until all above gates pass
+- [x] generic NPS Public Trails evaluated and rejected as incomplete for full A.T. geometry
+- [x] full A.T. treadway extent validated
+- [x] Georgia treadway isolated
+- [x] detailed centerline independently confirms Georgia coverage
+- [x] official-vs-geometric mileage distinction documented
+- [ ] shipped-use attribution text recorded in product/release metadata
+- [ ] reproducible Georgia import artifact generated and versioned
+- [ ] Springer and GA/NC boundary anchors validated/stored
+- [ ] official 2026 Georgia trail measure stored separately
+- [ ] intermediate Georgia locations validated against official facility/reference data
+- [ ] import versioning protects existing saved plans from silent route changes
+- [ ] data freshness visible in product metadata
+- [ ] planner switched from demo data to verified Georgia release
+- [ ] build-audit gate passes after the data switch
 
 ## Decision rule
 
-**No demo values are replaced simply because a GIS request returns data.** A source must pass geometry, ordering, mileage, provenance, freshness, and attribution checks first.
+**No demo value is replaced merely because a GIS request returns data.** Geometry, official mileage, facilities, and dynamic conditions are separate data classes with separate provenance and validation requirements.
 
 ## Expansion order
 
-1. verified trail centerline / geometry
-2. trailheads and road crossings
-3. shelters and campsites
-4. resupply/town access points
-5. water sources with freshness model
-6. closures and trail updates
-7. emergency/support resources
-8. weather/conditions
+1. verified Georgia geometry + official trail measure
+2. Georgia trailheads/road crossings/parking
+3. Georgia shelters and campsites
+4. expand verified route geometry state-by-state
+5. resupply/town access points
+6. water sources with freshness model
+7. closures and trail updates
+8. emergency/support resources
+9. weather/conditions
 
-This order keeps Trail-Mate useful while avoiding false confidence from stale safety-sensitive data.
+This order keeps Trail-Mate useful without creating false confidence from incomplete or stale data.
